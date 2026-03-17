@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+pydantic
+sentence-transformers
+transformers
+faiss-cpu
+presidio-analyzer
+presidio-anonymizer
+google-genai
+mistralai
+groq
+openai
+python-dotenv
+spacy
+python-multipart

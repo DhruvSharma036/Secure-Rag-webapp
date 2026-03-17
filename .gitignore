@@ -1,0 +1,6 @@
+venv/
+pycache/
+*.env
+*.jsonl
+*.index
+*_redacted.json
