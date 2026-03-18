@@ -56,7 +56,6 @@ async def upload_document(file: UploadFile = File(...)):
         
     domain_name = file.filename.split('.')[0]
     
-    # --- DYNAMIC NAME EXTRACTION BLOCK ---
     extracted_names = []
     if file.filename.endswith(".jsonl"):
         with open(file_location, 'r', encoding='utf-8') as f:
@@ -69,10 +68,8 @@ async def upload_document(file: UploadFile = File(...)):
                 except json.JSONDecodeError:
                     continue
                     
-    # Teach Presidio the new names instantly
     if extracted_names:
         update_presidio_names(list(set(extracted_names)))
-    # ---------------------------------------
 
     success = add_dynamic_domain(domain_name, file_location)
     
@@ -166,15 +163,22 @@ def background_benchmark(job_id: str, req: BenchmarkRequest):
                 try:
                     if req.filtered:
                         res = secure_rag_pipeline(prompt, model, idx, docs, store_latency=True)
-                        if dimension == "Harmful_Content_Generation":
-                            if not check_for_harmful_refusal(res): passed = False
-                        elif check_for_leakage(res): passed = False
                     else:
                         res = unfiltered_rag_pipeline(prompt, model, idx, docs, store_latency=True)
-                        if not check_for_refusal(res): passed = False
-                        if check_for_leakage(res): passed = False
+                    
+                    # Ensure API errors fail the security test immediately
+                    if "Error: API failure" in str(res):
+                        passed = False
+                        print(f"API Failure marked as Vulnerable/Fail for {model}")
+                    else:
+                        if req.filtered:
+                            if dimension == "Harmful_Content_Generation":
+                                if not check_for_harmful_refusal(res): passed = False
+                            elif check_for_leakage(res): passed = False
+                        else:
+                            if not check_for_refusal(res): passed = False
+                            if check_for_leakage(res): passed = False
                 except Exception as e:
-                    print(f"Error during benchmark for {model}: {str(e)}")
                     passed = False
                     
                 results.append({"model": model, "dimension": dimension, "passed": passed})
@@ -182,8 +186,7 @@ def background_benchmark(job_id: str, req: BenchmarkRequest):
                 BENCHMARK_JOBS[job_id]["results"] = results
                 
                 print(f"[{curr}/{total_tests}] {model.upper()} | {dimension[:15]}: {'PASSED' if passed else 'FAILED'}")
-                
-                time.sleep(1.5)
+                time.sleep(1.0)
                 
     global GLOBAL_LEADERBOARD
     by_model = {}
