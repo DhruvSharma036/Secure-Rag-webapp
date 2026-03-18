@@ -4,18 +4,21 @@ try:
 except ImportError:
     print("Notice: python-dotenv not installed. API keys must be set in the environment.")
 
+import os
+import json
+import time
+import shutil
+import uuid
 from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import uuid
-import time
-import shutil
 
 from pipeline import (
     secure_rag_pipeline, unfiltered_rag_pipeline, LATENCY_DATA, add_dynamic_domain,
     TEST_SUITE, check_for_leakage, check_for_refusal, check_for_harmful_refusal,
-    load_domain_assets, load_raw_domain
+    load_domain_assets, load_raw_domain, update_presidio_names
 )
+
 GLOBAL_LEADERBOARD = []
 
 app = FastAPI(title="SecureRAG API")
@@ -45,25 +48,41 @@ BENCHMARK_JOBS = {}
 async def health_check():
     return {"ok": True, "pipeline_connected": True}
 
-import os
-
 @app.post("/api/upload")
 async def upload_document(file: UploadFile = File(...)):
-    file_location = f"temp_{file.filename}"
+    file_location = f"{file.filename}"
     with open(file_location, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-    
+        
     domain_name = file.filename.split('.')[0]
     
+    # --- DYNAMIC NAME EXTRACTION BLOCK ---
+    extracted_names = []
+    if file.filename.endswith(".jsonl"):
+        with open(file_location, 'r', encoding='utf-8') as f:
+            for line in f:
+                try:
+                    data = json.loads(line)
+                    for key in ["name", "patient_name", "employee_name", "full_name", "user"]:
+                        if key in data and isinstance(data[key], str):
+                            extracted_names.append(data[key])
+                except json.JSONDecodeError:
+                    continue
+                    
+    # Teach Presidio the new names instantly
+    if extracted_names:
+        update_presidio_names(list(set(extracted_names)))
+    # ---------------------------------------
+
     success = add_dynamic_domain(domain_name, file_location)
     
     if os.path.exists(file_location):
         os.remove(file_location)
         
     if not success:
-        raise HTTPException(status_code=500, detail="Failed to process document. Ensure it contains valid JSONL.")
+        raise HTTPException(status_code=500, detail="Failed to process document. Ensure it contains valid JSON/Text.")
         
-    return {"domain": domain_name, "message": "Upload processed, FAISS index built, and raw file safely discarded."}
+    return {"domain": domain_name, "message": "Upload processed, FAISS index built, and dynamic PII updated."}
 
 @app.post("/api/query")
 async def run_query(req: QueryRequest):
@@ -146,12 +165,12 @@ def background_benchmark(job_id: str, req: BenchmarkRequest):
                 passed = True
                 try:
                     if req.filtered:
-                        res = secure_rag_pipeline(prompt, model, idx, docs, store_latency=True)
+                        res = secure_rag_pipeline(prompt, model, idx, docs, store_latency=False)
                         if dimension == "Harmful_Content_Generation":
                             if not check_for_harmful_refusal(res): passed = False
                         elif check_for_leakage(res): passed = False
                     else:
-                        res = unfiltered_rag_pipeline(prompt, model, idx, docs, store_latency=True)
+                        res = unfiltered_rag_pipeline(prompt, model, idx, docs, store_latency=False)
                         if not check_for_refusal(res): passed = False
                         if check_for_leakage(res): passed = False
                 except Exception as e:

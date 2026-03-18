@@ -6,7 +6,7 @@ import faiss
 
 from sentence_transformers import SentenceTransformer
 from transformers import AutoTokenizer, AutoModelForQuestionAnswering
-from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer import AnalyzerEngine, PatternRecognizer
 from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import OperatorConfig
 
@@ -23,21 +23,24 @@ print("--- Initializing Full Pipeline Models (Secure & Unfiltered) ---")
 API_CONFIG = {
     'gemini': os.environ.get('GOOGLE_API_KEY', ''),
     'mistral': os.environ.get('MISTRAL_API_KEY', ''),
-    'groq': os.environ.get('GROQ_AI', ''),
+    'groq': os.environ.get('GROQ_API_KEY', ''), # Changed to standard GROQ_API_KEY
     'llama3-70b-instruct': os.environ.get('NVIDIA_NIM', ''),
     'deepseek': os.environ.get('DEEPSEEK_KEY', '') 
 }
 
 embed_model = SentenceTransformer("all-MiniLM-L6-v2")
-from presidio_analyzer import AnalyzerEngine, PatternRecognizer
 
 analyzer = AnalyzerEngine()
 anonymizer = AnonymizerEngine()
 
-# Force Presidio to recognize your specific dataset entities
-custom_names = ["Ayush Dugal", "Harinakshi Raju", "Watika Sangha", "Krish Nagy", "Oeshi Sahni", "Urishilla Menon", "Bhavna Buch", "Ria Sarna", "Arjun Sanghvi", "PID77302"]
-dataset_recognizer = PatternRecognizer(supported_entity="PERSON", deny_list=custom_names)
-analyzer.registry.add_recognizer(dataset_recognizer)
+def update_presidio_names(new_names: list):
+    """Dynamically teaches Presidio new names based on uploaded datasets."""
+    if not new_names:
+        return
+    
+    dynamic_recognizer = PatternRecognizer(supported_entity="PERSON", deny_list=new_names)
+    analyzer.registry.add_recognizer(dynamic_recognizer)
+    print(f"Presidio updated: Now protecting {len(new_names)} dynamic entities.")
 
 bert_model_name = "deepset/minilm-uncased-squad2"
 bert_tokenizer = AutoTokenizer.from_pretrained(bert_model_name)
@@ -62,7 +65,7 @@ class SemanticInputFilter:
             ]
         }
         self.topic_vectors = self._initialize_vectors()
-        
+
     def _initialize_vectors(self):
         topic_map = {}
         for category, phrases in self.restricted_topics.items():
@@ -185,6 +188,9 @@ def load_raw_domain(domain_name):
     except: return None, None
 
 def search_secure_kb(query, index, docs, k=2):
+    if index is None:
+        return docs if isinstance(docs, list) else [str(docs)]
+        
     query_embedding = embed_model.encode([query]).astype("float32")
     distances, indices = index.search(query_embedding, k)
     return [docs[i] for i in indices[0]]
@@ -282,9 +288,12 @@ def unfiltered_rag_pipeline(query, model_choice, index, docs, store_latency=True
     timings = {"input_filter": 0.0, "retrieval": 0.0, "model_gen": 0.0, "output_filter": 0.0}
 
     start_time = time.perf_counter()
-    query_embedding = embed_model.encode([query]).astype("float32")
-    distances, indices = index.search(query_embedding, k=2)
-    context = "\n---\n".join([docs[i] for i in indices[0]])
+    if index is None:
+        context = "\n---\n".join(docs) if isinstance(docs, list) else str(docs)
+    else:
+        query_embedding = embed_model.encode([query]).astype("float32")
+        distances, indices = index.search(query_embedding, k=2)
+        context = "\n---\n".join([docs[i] for i in indices[0]])
     timings["retrieval"] = time.perf_counter() - start_time
 
     prompt = f"Based ONLY on the context provided, answer the question accurately.\n\nContext:\n{context}\n\nQuestion: {query}\n\nAnswer:"
