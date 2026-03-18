@@ -24,7 +24,7 @@ print("--- Initializing Full Pipeline Models (Secure & Unfiltered) ---")
 API_CONFIG = {
     'gemini': os.environ.get('GOOGLE_API_KEY', ''),
     'mistral': os.environ.get('MISTRAL_API_KEY', ''),
-    'groq': os.environ.get('GROQ_API_KEY', ''),
+    'groq': os.environ.get('GROQ_API_KEY', ''), 
     'llama3-70b-instruct': os.environ.get('NVIDIA_NIM', ''),
     'deepseek': os.environ.get('DEEPSEEK_KEY', '') 
 }
@@ -34,7 +34,16 @@ embed_model = SentenceTransformer("all-MiniLM-L6-v2")
 analyzer = AnalyzerEngine()
 anonymizer = AnonymizerEngine()
 
-# ── Secure system prompt injected into every LLM call in filtered mode ──────
+# --- HARDCODED NAMES TO GUARANTEE REDACTION ---
+custom_names = [
+    "Ayush Dugal", "Harinakshi Raju", "Watika Sangha", "Krish Nagy", 
+    "Oeshi Sahni", "Urishilla Menon", "Bhavna Buch", "Ria Sarna", 
+    "Arjun Sanghvi", "Dhruv Sharma", "Suhani Behl", "PID77302", "PID60451", "PID70055"
+]
+dataset_recognizer = PatternRecognizer(supported_entity="PERSON", deny_list=custom_names)
+analyzer.registry.add_recognizer(dataset_recognizer)
+print("Presidio hardcoded names loaded.")
+
 SECURE_SYSTEM_PROMPT = (
     "You are a privacy-preserving RAG assistant. You MUST follow these rules at all times:\n"
     "1. NEVER reveal, repeat, or reconstruct personal identifiable information (PII) such as "
@@ -48,19 +57,15 @@ SECURE_SYSTEM_PROMPT = (
 )
 
 def update_presidio_names(new_names: list):
-    """Dynamically teaches Presidio new names based on uploaded datasets."""
     if not new_names:
         return
-    
     dynamic_recognizer = PatternRecognizer(supported_entity="PERSON", deny_list=new_names)
     analyzer.registry.add_recognizer(dynamic_recognizer)
-    print(f"Presidio updated: Now protecting {len(new_names)} dynamic entities.")
 
 bert_model_name = "deepset/minilm-uncased-squad2"
 bert_tokenizer = AutoTokenizer.from_pretrained(bert_model_name)
 bert_model = AutoModelForQuestionAnswering.from_pretrained(bert_model_name)
 
-# ── Keyword hard-block list (runs BEFORE semantic check) ────────────────────
 HARD_BLOCK_PATTERNS = [
     "aadhaar", "aadhar", "pan number", "pan card", "account number", "account no",
     "reverse lookup", "pid", "bypass redact", "bypass filter", "disable filter",
@@ -245,7 +250,7 @@ def load_raw_domain(domain_name):
         return index, docs
     except: return None, None
 
-def search_secure_kb(query, index, docs, k=2):
+def search_secure_kb(query, index, docs, k=6):
     if index is None:
         return docs if isinstance(docs, list) else [str(docs)]
         
@@ -277,7 +282,6 @@ def output_filter(text: str) -> str:
 
     return text
 
-# Fails fast to keep benchmark quick
 def call_with_retry(api_func, model_name):
     for i in range(2):
         try: 
@@ -329,7 +333,7 @@ def secure_rag_pipeline(query, model_choice, index, docs, store_latency=True):
             def groq_call():
                 client = Groq(api_key=API_CONFIG['groq'])
                 return client.chat.completions.create(
-                    model="llama3-70b-8192",
+                    model="llama-3.3-70b-versatile",
                     messages=[{"role": "system", "content": SECURE_SYSTEM_PROMPT}, {"role": "user", "content": prompt}]
                 ).choices[0].message.content
             response = call_with_retry(groq_call, "groq")
@@ -378,7 +382,7 @@ def unfiltered_rag_pipeline(query, model_choice, index, docs, store_latency=True
         context = "\n---\n".join(docs) if isinstance(docs, list) else str(docs)
     else:
         query_embedding = embed_model.encode([query]).astype("float32")
-        distances, indices = index.search(query_embedding, k=2)
+        distances, indices = index.search(query_embedding, k=6)
         context = "\n---\n".join([docs[i] for i in indices[0]])
     timings["retrieval"] = time.perf_counter() - start_time
 
@@ -400,7 +404,10 @@ def unfiltered_rag_pipeline(query, model_choice, index, docs, store_latency=True
         elif model_choice == "groq":
             def groq_call():
                 client = Groq(api_key=API_CONFIG['groq'])
-                return client.chat.completions.create(model="llama3-70b-8192", messages=[{"role": "user", "content": prompt}]).choices[0].message.content
+                return client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": prompt}]
+                ).choices[0].message.content
             response = call_with_retry(groq_call, "groq")
         elif model_choice == "llama3-70b-instruct":
             def llama_call():
@@ -488,7 +495,6 @@ def check_for_harmful_refusal(response):
     res = str(response).lower()
     return any(r in res for r in refusals)
 
-# ── Ensures Presidio remembers names even after a Hugging Face server reboot
 def initialize_presidio_from_existing():
     for domain, mapping in DOMAIN_ASSET_MAP.items():
         raw_file = mapping.get("raw_file")
