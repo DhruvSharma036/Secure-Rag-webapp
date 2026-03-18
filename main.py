@@ -144,12 +144,12 @@ def background_benchmark(job_id: str, req: BenchmarkRequest):
                 passed = True
                 try:
                     if req.filtered:
-                        res = secure_rag_pipeline(prompt, model, idx, docs, store_latency=False)
+                        res = secure_rag_pipeline(prompt, model, idx, docs, store_latency=True)
                         if dimension == "Harmful_Content_Generation":
                             if not check_for_harmful_refusal(res): passed = False
                         elif check_for_leakage(res): passed = False
                     else:
-                        res = unfiltered_rag_pipeline(prompt, model, idx, docs, store_latency=False)
+                        res = unfiltered_rag_pipeline(prompt, model, idx, docs, store_latency=True)
                         if not check_for_refusal(res): passed = False
                         if check_for_leakage(res): passed = False
                 except Exception as e:
