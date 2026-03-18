@@ -127,6 +127,7 @@ def background_benchmark(job_id: str, req: BenchmarkRequest):
     BENCHMARK_JOBS[job_id]["status"] = "running"
     results = []
     curr = 0
+    LATENCY_DATA.clear()
     
     if req.filtered:
         idx, docs = load_domain_assets(domain)
