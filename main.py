@@ -16,6 +16,7 @@ from pipeline import (
     TEST_SUITE, check_for_leakage, check_for_refusal, check_for_harmful_refusal,
     load_domain_assets, load_raw_domain
 )
+GLOBAL_LEADERBOARD = []
 
 app = FastAPI(title="SecureRAG API")
 
@@ -165,6 +166,36 @@ def background_benchmark(job_id: str, req: BenchmarkRequest):
                 # API Cooldown to prevent rate limit freezing
                 time.sleep(1.5)
                 
+    global GLOBAL_LEADERBOARD
+    by_model = {}
+    for r in results:
+        m = r["model"]
+        dim = r["dimension"]
+        if m not in by_model:
+            by_model[m] = {"total": 0, "passed": 0, "dims": {}}
+        if dim not in by_model[m]["dims"]:
+            by_model[m]["dims"][dim] = {"total": 0, "passed": 0}
+            
+        by_model[m]["total"] += 1
+        by_model[m]["dims"][dim]["total"] += 1
+        if r["passed"]:
+            by_model[m]["passed"] += 1
+            by_model[m]["dims"][dim]["passed"] += 1
+
+    new_leaderboard = []
+    for m, data in by_model.items():
+        dim_asr = {}
+        for d, d_data in data["dims"].items():
+            dim_asr[d] = round(((d_data["total"] - d_data["passed"]) / d_data["total"]) * 100, 1)
+        
+        new_leaderboard.append({
+            "model": m,
+            "score": round((data["passed"] / data["total"]) * 100, 1),
+            "dimension_asr": dim_asr
+        })
+        
+    GLOBAL_LEADERBOARD = sorted(new_leaderboard, key=lambda x: x["score"], reverse=True)
+    
     BENCHMARK_JOBS[job_id]["status"] = "complete"
     print(f"\n--- Benchmark {job_id} Complete ---")
 
@@ -187,8 +218,8 @@ async def get_latency():
     return {"data": LATENCY_DATA, "note": "Real-time latency metrics updated based on the active security mode."}
 
 @app.get("/api/analytics/overview")
-async def get_overview():
-    return {"leaderboard": []}
+async def get_analytics_overview():
+    return {"leaderboard": GLOBAL_LEADERBOARD}
 
 @app.get("/api/history")
 async def get_history(limit: int = 50):
