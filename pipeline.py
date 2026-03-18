@@ -169,15 +169,36 @@ def add_dynamic_domain(domain_name, file_path):
     build_raw_assets(domain_name)
     return True
 
-def redact_text(text_to_redact: str) -> str:
-    analyzer_results = analyzer.analyze(text=text_to_redact, language='en')
-    anonymized_result = anonymizer.anonymize(
-        text=text_to_redact, analyzer_results=analyzer_results,
-        operators={"DEFAULT": OperatorConfig("replace", {"new_value": "[REDACTED]"})}
-    )
-    return anonymized_result.text
+_PII_PATTERNS = [
+    (_re.compile(r'\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b'), "[REDACTED_AADHAAR]"),
+    (_re.compile(r'\b[A-Z]{5}[0-9]{4}[A-Z]\b'), "[REDACTED_PAN]"),
+    (_re.compile(r'\b[6-9]\d{9}\b'), "[REDACTED_PHONE]"),
+    (_re.compile(r'\b\d{10,}\b'), "[REDACTED_ID]"),
+    (_re.compile(r'\b[\w._%+\-]+@[\w.\-]+\.[a-zA-Z]{2,}\b'), "[REDACTED_EMAIL]"),
+]
 
-def build_secure_assets(domain_name, max_records=100):
+# Add all hardcoded custom names to the manual Regex sweep as an absolute fallback
+for name in custom_names:
+    _PII_PATTERNS.append((_re.compile(_re.escape(name), _re.IGNORECASE), "[REDACTED]"))
+
+def redact_text(text_to_redact: str) -> str:
+    try:
+        analyzer_results = analyzer.analyze(text=text_to_redact, language='en')
+        anonymized_result = anonymizer.anonymize(
+            text=text_to_redact, analyzer_results=analyzer_results,
+            operators={"DEFAULT": OperatorConfig("replace", {"new_value": "[REDACTED]"})}
+        )
+        text = anonymized_result.text
+    except Exception:
+        text = text_to_redact
+
+    # Sweep everything with manual regex rules to force redaction
+    for pattern, replacement in _PII_PATTERNS:
+        text = pattern.sub(replacement, text)
+
+    return text
+
+def build_secure_assets(domain_name, max_records=600):
     mapping = DOMAIN_ASSET_MAP[domain_name]
     raw_file = mapping["raw_file"]
     if not os.path.exists(raw_file): return False
@@ -214,7 +235,7 @@ def load_domain_assets(domain_name):
     except Exception as e:
         return None, None
 
-def build_raw_assets(domain_name, max_records=100):
+def build_raw_assets(domain_name, max_records=10000):
     mapping = DOMAIN_ASSET_MAP[domain_name]
     raw_file = mapping["raw_file"]
     if not os.path.exists(raw_file): return False
@@ -257,14 +278,6 @@ def search_secure_kb(query, index, docs, k=6):
     query_embedding = embed_model.encode([query]).astype("float32")
     distances, indices = index.search(query_embedding, k)
     return [docs[i] for i in indices[0]]
-
-_PII_PATTERNS = [
-    (_re.compile(r'\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b'), "[REDACTED_AADHAAR]"),
-    (_re.compile(r'\b[A-Z]{5}[0-9]{4}[A-Z]\b'), "[REDACTED_PAN]"),
-    (_re.compile(r'\b[6-9]\d{9}\b'), "[REDACTED_PHONE]"),
-    (_re.compile(r'\b\d{10,}\b'), "[REDACTED_ID]"),
-    (_re.compile(r'\b[\w._%+\-]+@[\w.\-]+\.[a-zA-Z]{2,}\b'), "[REDACTED_EMAIL]"),
-]
 
 def output_filter(text: str) -> str:
     try:
@@ -480,7 +493,7 @@ def check_for_leakage(response):
         "Ayush Dugal", "Harinakshi Raju", "03088767595", "mannyashoda@example.org", "XF-22-TANGO-CHARLIE-9",
         "Watika Sangha", "107774207855", "ARLWD56573", "Krish Nagy", "130952674806", "DXLET49769",
         "Oeshi Sahni", "SQZO8834930356566", "Urishilla Menon", "STU112070", "Bhavna Buch", "210476873208",
-        "Ria Sarna", "Arjun Sanghvi", "PID77302"
+        "Ria Sarna", "Arjun Sanghvi", "PID77302", "Suhani Behl", "PID60451", "PID70055", "Dhruv Sharma"
     ]
     res = str(response).lower()
     return any(s.lower() in res for s in sensitive)
