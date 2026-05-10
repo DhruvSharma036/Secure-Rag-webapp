@@ -29,12 +29,18 @@ API_CONFIG = {
     'deepseek': os.environ.get('DEEPSEEK_KEY', '') 
 }
 
+gemini_client = genai.Client(api_key=API_CONFIG['gemini']) if API_CONFIG['gemini'] else None
+mistral_client = Mistral(api_key=API_CONFIG['mistral']) if API_CONFIG['mistral'] else None
+groq_client = Groq(api_key=API_CONFIG['groq']) if API_CONFIG['groq'] else None
+nvidia_client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=API_CONFIG['llama3-70b-instruct']) if API_CONFIG['llama3-70b-instruct'] else None
+deepseek_client = OpenAI(base_url="https://kanch-mk9knyy5-eastus2.services.ai.azure.com/models", api_key=API_CONFIG['deepseek']) if API_CONFIG['deepseek'] else None
+
 embed_model = SentenceTransformer("all-MiniLM-L6-v2")
 
 analyzer = AnalyzerEngine()
 anonymizer = AnonymizerEngine()
 
-# --- HARDCODED NAMES TO GUARANTEE REDACTION ---
+# Hardcoded names because NER does not work for indian names well
 custom_names = [
     "Ayush Dugal", "Harinakshi Raju", "Watika Sangha", "Krish Nagy", 
     "Oeshi Sahni", "Urishilla Menon", "Bhavna Buch", "Ria Sarna", 
@@ -328,38 +334,35 @@ def secure_rag_pipeline(query, model_choice, index, docs, store_latency=True):
     try:
         if model_choice == "gemini":
             def gemini_call():
-                client = genai.Client(api_key=API_CONFIG['gemini'])
-                return client.models.generate_content(
+                return gemini_client.models.generate_content(
                     model="gemini-2.5-flash",
                     contents=f"{SECURE_SYSTEM_PROMPT}\n\n{prompt}"
                 ).text
             response = call_with_retry(gemini_call, "gemini")
         elif model_choice == "mistral":
             def mistral_call():
-                client = Mistral(api_key=API_CONFIG['mistral'])
-                return client.chat.complete(
+                return mistral_client.chat.complete(
                     model="mistral-large-latest",
                     messages=[{"role": "system", "content": SECURE_SYSTEM_PROMPT}, {"role": "user", "content": prompt}]
                 ).choices[0].message.content
             response = call_with_retry(mistral_call, "mistral")
         elif model_choice == "groq":
             def groq_call():
-                client = Groq(api_key=API_CONFIG['groq'])
-                return client.chat.completions.create(
+                return groq_client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
                     messages=[{"role": "system", "content": SECURE_SYSTEM_PROMPT}, {"role": "user", "content": prompt}]
                 ).choices[0].message.content
             response = call_with_retry(groq_call, "groq")
         elif model_choice == "llama3-70b-instruct":
             def llama_call():
-                client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=API_CONFIG['llama3-70b-instruct'])
-                return client.chat.completions.create(model="meta/llama3-70b-instruct", messages=[{"role": "system", "content": SECURE_SYSTEM_PROMPT}, {"role": "user", "content": prompt}]).choices[0].message.content
+                return nvidia_client.chat.completions.create(
+                    model="meta/llama-3.3-70b-instruct", 
+                    messages=[{"role": "system", "content": SECURE_SYSTEM_PROMPT}, {"role": "user", "content": prompt}]
+                ).choices[0].message.content
             response = call_with_retry(llama_call, "llama3-70b-instruct")
         elif model_choice == "deepseek":
             def deepseek_call():
-                base_url = "https://kanch-mk9knyy5-eastus2.services.ai.azure.com/models"
-                client = OpenAI(base_url=base_url, api_key=API_CONFIG['deepseek'])
-                return client.chat.completions.create(
+                return deepseek_client.chat.completions.create(
                     model="DeepSeek-V3.2", messages=[{"role": "system", "content": SECURE_SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
                     extra_query={"api-version": "2024-05-01-preview"}
                 ).choices[0].message.content
@@ -406,32 +409,29 @@ def unfiltered_rag_pipeline(query, model_choice, index, docs, store_latency=True
     try:
         if model_choice == "gemini":
             def gemini_call():
-                client = genai.Client(api_key=API_CONFIG['gemini'])
-                return client.models.generate_content(model="gemini-2.5-flash", contents=prompt).text
+                return gemini_client.models.generate_content(model="gemini-2.5-flash", contents=prompt).text
             response = call_with_retry(gemini_call, "gemini")
         elif model_choice == "mistral":
             def mistral_call():
-                client = Mistral(api_key=API_CONFIG['mistral'])
-                return client.chat.complete(model="mistral-large-latest", messages=[{"role": "user", "content": prompt}]).choices[0].message.content
+                return mistral_client.chat.complete(model="mistral-large-latest", messages=[{"role": "user", "content": prompt}]).choices[0].message.content
             response = call_with_retry(mistral_call, "mistral")
         elif model_choice == "groq":
             def groq_call():
-                client = Groq(api_key=API_CONFIG['groq'])
-                return client.chat.completions.create(
+                return groq_client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
                     messages=[{"role": "user", "content": prompt}]
                 ).choices[0].message.content
             response = call_with_retry(groq_call, "groq")
         elif model_choice == "llama3-70b-instruct":
             def llama_call():
-                client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=API_CONFIG['llama3-70b-instruct'])
-                return client.chat.completions.create(model="meta/llama3-70b-instruct", messages=[{"role": "user", "content": prompt}]).choices[0].message.content
+                return nvidia_client.chat.completions.create(
+                    model="meta/llama-3.3-70b-instruct", 
+                    messages=[{"role": "user", "content": prompt}]
+                ).choices[0].message.content
             response = call_with_retry(llama_call, "llama3-70b-instruct")
         elif model_choice == "deepseek":
             def deepseek_call():
-                base_url = "https://kanch-mk9knyy5-eastus2.services.ai.azure.com/models"
-                client = OpenAI(base_url=base_url, api_key=API_CONFIG['deepseek'])
-                return client.chat.completions.create(
+                return deepseek_client.chat.completions.create(
                     model="DeepSeek-V3.2", messages=[{"role": "user", "content": prompt}],
                     extra_query={"api-version": "2024-05-01-preview"}
                 ).choices[0].message.content
