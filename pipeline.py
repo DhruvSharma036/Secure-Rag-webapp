@@ -24,7 +24,7 @@ print("--- Initializing Full Pipeline Models (Secure & Unfiltered) ---")
 API_CONFIG = {
     'gemini': os.environ.get('GOOGLE_API_KEY', ''),
     'mistral': os.environ.get('MISTRAL_API_KEY', ''),
-    'groq': os.environ.get('GROQ_API_KEY', ''), 
+    'groq': os.environ.get('GROQ_AI', ''), 
     'llama3-70b-instruct': os.environ.get('NVIDIA_NIM', ''),
     'deepseek': os.environ.get('DEEPSEEK_KEY', '') 
 }
